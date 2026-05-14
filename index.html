@@ -88,9 +88,10 @@
   .card { background: var(--bg-2); border: 1px solid var(--border); padding: 16px 18px; cursor: pointer; transition: all 0.15s; position: relative; }
   .card.dragging { opacity: 0.4; }
   .card.drag-over { border-color: var(--accent); border-style: dashed; }
-  .drag-handle { position: absolute; top: 8px; right: 8px; color: var(--t3); font-size: 14px; cursor: grab; user-select: none; padding: 2px 6px; }
-  .drag-handle:hover { color: var(--accent); }
-  .drag-handle:active { cursor: grabbing; }  .card:hover { border-color: var(--border-l); transform: translateY(-1px); }
+.drag-handle { position: absolute; top: 50%; left: -2px; transform: translateY(-50%); color: var(--t3); font-size: 16px; cursor: grab; user-select: none; padding: 6px 4px; line-height: 0.7; letter-spacing: -2px; opacity: 0.5; }
+  .drag-handle:hover { color: var(--accent); opacity: 1; }
+  .drag-handle:active { cursor: grabbing; }
+  .card:hover { border-color: var(--border-l); transform: translateY(-1px); }
   .card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .card-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
   .card-stripe.holding { background: var(--up); }
