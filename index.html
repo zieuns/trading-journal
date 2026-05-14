@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>매매 일지</title>
+<title>매매 일지 of JIEUN</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -84,9 +84,13 @@
   /* GRID */
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
 
-  /* CARD */
+/* CARD */
   .card { background: var(--bg-2); border: 1px solid var(--border); padding: 16px 18px; cursor: pointer; transition: all 0.15s; position: relative; }
-  .card:hover { border-color: var(--border-l); transform: translateY(-1px); }
+  .card.dragging { opacity: 0.4; }
+  .card.drag-over { border-color: var(--accent); border-style: dashed; }
+  .drag-handle { position: absolute; top: 8px; right: 8px; color: var(--t3); font-size: 14px; cursor: grab; user-select: none; padding: 2px 6px; }
+  .drag-handle:hover { color: var(--accent); }
+  .drag-handle:active { cursor: grabbing; }  .card:hover { border-color: var(--border-l); transform: translateY(-1px); }
   .card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .card-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
   .card-stripe.holding { background: var(--up); }
@@ -223,7 +227,7 @@
 
 <header class="header">
   <div class="header-left">
-    <div class="logo"><span class="logo-bar"></span>매매 일지</div>
+    <div class="logo"><span class="logo-bar"></span>매매 일지 of JIEUN</div>
     <div class="header-divider"></div>
     <div class="header-sub">미국 주식 · USD</div>
     <div id="syncStatus"></div>
@@ -635,7 +639,13 @@ function render() {
     return true;
   });
 
+// 사용자 지정 순서가 있으면 그 순서대로, 없으면 기존 로직
   filtered.sort((a,b) => {
+    const oa = a.sortOrder ?? null;
+    const ob = b.sortOrder ?? null;
+    if (oa != null && ob != null) return oa - ob;
+    if (oa != null) return -1;
+    if (ob != null) return 1;
     const rank=p=>{const s=summarize(p);if(p.type==='HOLDING'&&!s.isClosed)return 0;if(p.type==='WATCH')return 1;return 2;};
     const ra=rank(a),rb=rank(b);
     if(ra!==rb)return ra-rb;
@@ -669,9 +679,10 @@ function render() {
       } else { m2L='보유수량'; m2V=fmt(s.heldQty,4); }
     }
 
-    return `
-      <div class="card ${tc} ${p.id===selectedId?'selected':''}" data-id="${p.id}">
+  return `
+      <div class="card ${tc} ${p.id===selectedId?'selected':''}" data-id="${p.id}" draggable="true">
         <div class="card-stripe ${tc}"></div>
+        <div class="drag-handle" title="드래그하여 순서 변경">⋮⋮</div>
         <div class="card-top">
           <div><div class="card-ticker">${p.ticker}</div><div class="card-name">${p.name||'—'}</div></div>
           <span class="label label-${tc}">${tl}</span>
@@ -704,7 +715,61 @@ function render() {
       render();
       openDetail(card.dataset.id);
     };
+
+    // 드래그 앤 드롭
+    card.ondragstart = (e) => {
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', card.dataset.id);
+    };
+    card.ondragend = () => {
+      card.classList.remove('dragging');
+      grid.querySelectorAll('.card').forEach(c => c.classList.remove('drag-over'));
+    };
+    card.ondragover = (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (!card.classList.contains('dragging')) card.classList.add('drag-over');
+    };
+    card.ondragleave = () => card.classList.remove('drag-over');
+    card.ondrop = (e) => {
+      e.preventDefault();
+      const draggedId = e.dataTransfer.getData('text/plain');
+      const targetId = card.dataset.id;
+      if (draggedId === targetId) return;
+      reorderPositions(draggedId, targetId);
+    };
   });
+}
+
+// 드래그로 순서 변경
+function reorderPositions(draggedId, targetId) {
+  // 현재 화면에 보이는 순서대로 sortOrder 부여
+  const visibleCards = Array.from(document.querySelectorAll('#posGrid .card'));
+  const visibleIds = visibleCards.map(c => c.dataset.id);
+  const draggedIdx = visibleIds.indexOf(draggedId);
+  const targetIdx = visibleIds.indexOf(targetId);
+  if (draggedIdx < 0 || targetIdx < 0) return;
+
+  // 드래그된 아이템을 타겟 위치로
+  visibleIds.splice(draggedIdx, 1);
+  visibleIds.splice(targetIdx, 0, draggedId);
+
+  // 새 순서대로 sortOrder 부여 (10 단위로 — 나중 삽입 여유)
+  visibleIds.forEach((id, i) => {
+    const pos = positions.find(p => p.id === id);
+    if (pos) pos.sortOrder = (i + 1) * 10;
+  });
+
+  save(positions);
+  render();
+  // Supabase에 변경된 모든 종목 동기화
+  visibleIds.forEach(id => {
+    const pos = positions.find(p => p.id === id);
+    if (pos) sbUpsert(pos).catch(() => {});
+  });
+  setSyncStatus('↑ 순서 저장 중...', 'var(--info)');
+  setTimeout(() => { setSyncStatus('✓ 동기화됨', 'var(--up)'); setTimeout(() => setSyncStatus('', ''), 2000); }, 800);
 }
 
 // ============================================================
@@ -732,7 +797,7 @@ async function doSearch(q) {
     const res = await fetch(url);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    const items = (data.result || []).filter(r => r.type === 'Common Stock' && !r.symbol.includes('.')).slice(0, 8);
+    const items = (data.result || []).filter(r => (r.type === 'Common Stock' || r.type === 'ETP' || r.type === 'ETF') && !r.symbol.includes('.')).slice(0, 8);
     if (items.length === 0) { searchDrop.innerHTML = '<div class="search-msg">결과 없음 · 직접 티커를 입력하세요</div>'; return; }
     searchDrop.innerHTML = items.map(r => `<div class="sr-item" data-sym="${r.symbol}" data-desc="${(r.description||'').replace(/"/g,'&quot;')}"><span class="sym">${r.symbol}</span><span class="desc">${r.description||''}</span><span class="exch">${r.displaySymbol||''}</span></div>`).join('');
     searchDrop.querySelectorAll('.sr-item').forEach(el => {
@@ -1600,11 +1665,64 @@ function renderStats() {
 }
 
 // ============================================================
+// 전체 종목 현재가 자동 로드 (앱 시작 시)
+// ============================================================
+async function loadAllLivePrices() {
+  if (!getTD()) return;
+  if (positions.length === 0) return;
+
+  setSyncStatus('↓ 시세 불러오는 중...', 'var(--info)');
+  let loaded = 0;
+
+  for (const pos of positions) {
+    const s = summarize(pos);
+    let baseDate, basePrice;
+    if (pos.type === 'WATCH' || s.buyQty === 0) {
+      baseDate = (pos.createdAt||'').slice(0,10);
+      basePrice = pos.watchPrice;
+    } else {
+      baseDate = s.firstBuyDate;
+      basePrice = s.avgCost;
+    }
+    if (!baseDate) continue;
+
+    try {
+      const stockData = await fetchTD(pos.ticker, baseDate);
+      const allDates = Object.keys(stockData).filter(d => d >= baseDate).sort();
+      if (allDates.length === 0) continue;
+      const stockClose = allDates.map(d => stockData[d]);
+      const base = (basePrice && basePrice > 0) ? basePrice : stockClose[0];
+      const curPrice = stockClose[stockClose.length - 1];
+      const curReturn = ((curPrice - base) / base) * 100;
+      const baseLabel = pos.type === 'WATCH' ? '관심가 대비' : '평단 대비';
+      livePrices[pos.ticker] = { price: curPrice, ret: curReturn, baseLabel };
+      loaded++;
+      // 분당 8회 제한 대응: 종목마다 8초 대기
+      if (loaded < positions.length) await new Promise(r => setTimeout(r, 8000));
+    } catch(e) {
+      // 한도 초과나 실패 시 중단
+      if (e.message === 'RATE_LIMIT') break;
+    }
+  }
+
+  render();
+  if (loaded > 0) {
+    setSyncStatus(`✓ ${loaded}개 시세 로드됨`, 'var(--up)');
+    setTimeout(() => setSyncStatus('', ''), 2500);
+  } else {
+    setSyncStatus('', '');
+  }
+}
+
+// ============================================================
 // 초기화
 // ============================================================
 render();
 resetChart();
-initFromSupabase();
+initFromSupabase().then(() => {
+  // Supabase 로드 후 시세 자동 로드
+  setTimeout(loadAllLivePrices, 1500);
+});
 </script>
 </body>
 </html>
