@@ -647,6 +647,12 @@
   }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- iOS 홈 화면 아이콘 및 네이티브 앱 설정 -->
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="매매일지">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  
 </head>
 <body>
 
@@ -820,37 +826,34 @@
   </div>
 </div>
 
-<!-- API 키 설정 (Finnhub + Alpha Vantage) -->
+<!-- API 키 설정 (Finnhub 전용으로 통합) -->
 <div class="overlay" id="fhKeyOverlay">
-  <div class="modal" style="max-width:500px;">
-    <div class="modal-head">
-      <h2>API 키 설정</h2>
-      <button class="modal-x" data-close="fhKeyOverlay">×</button>
-    </div>
-    <div class="modal-body">
-      <p style="font-size:13px; color:var(--t2); margin-bottom:14px;">
-        키는 이 브라우저에만 저장되며 외부로 전송되지 않습니다. 일부만 입력해도 됩니다.
-      </p>
-      <div class="ff" style="margin-bottom:14px;">
-        <label>Finnhub API 키 <span class="opt">종목 검색 · Fundamentals</span></label>
-        <p style="font-size:11px;color:var(--t3);margin:4px 0;">
-          <a href="https://finnhub.io/register" target="_blank" rel="noopener" style="color:var(--info);">finnhub.io/register</a> 에서 무료 가입
-        </p>
-        <input type="text" id="fhKeyInput" placeholder="Finnhub 키 입력..." autocomplete="off" />
-      </div>
-      <div class="ff">
-        <label>Alpha Vantage API 키 <span class="opt">종가 차트</span></label>
-        <p style="font-size:11px;color:var(--t3);margin:4px 0;">
-          <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener" style="color:var(--info);">alphavantage.co</a> 에서 무료 발급 (일 25회 제한)
-        </p>
-        <input type="text" id="avKeyInput" placeholder="Alpha Vantage 키 입력..." autocomplete="off" />
-      </div>
-      <div class="form-actions">
-        <button class="btn btn-ghost" data-close="fhKeyOverlay">취소</button>
-        <button class="btn" id="fhKeySaveBtn">저장</button>
-      </div>
-    </div>
-  </div>
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-head">
+      <h2>API 키 설정</h2>
+      <button class="modal-x" data-close="fhKeyOverlay">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px; color:var(--t2); margin-bottom:14px;">
+        키는 이 브라우저에만 저장되며 외부로 전송되지 않습니다.
+      </p>
+      <div class="ff" style="margin-bottom:14px;">
+        <label>Finnhub API 키 <span class="opt">종목 검색 · Fundamentals · 종가 차트</span></label>
+        <p style="font-size:11px;color:var(--t3);margin:4px 0;">
+          <a href="https://finnhub.io/register" target="_blank" rel="noopener" style="color:var(--info);">finnhub.io/register</a> 에서 무료 가입
+        </p>
+        <input type="text" id="fhKeyInput" placeholder="Finnhub 키 입력..." autocomplete="off" />
+      </div>
+      
+      <!-- Alpha Vantage 입력란은 화면에서 숨김 (자바스크립트 오류 방지용) -->
+      <input type="hidden" id="avKeyInput" value="" />
+      
+      <div class="form-actions">
+        <button class="btn btn-ghost" data-close="fhKeyOverlay">취소</button>
+        <button class="btn" id="fhKeySaveBtn">저장</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- 종목 상세 모달 -->
@@ -1896,25 +1899,39 @@ function resetChart() {
   if (priceChart) { priceChart.destroy(); priceChart = null; }
 }
 
-async function fetchAV(symbol, needFull) {
-  const cacheKey = symbol + (needFull ? '_full' : '_compact');
+async function fetchPriceData(symbol, baseDate) {
+  const cacheKey = symbol + '_price';
   if (avCache[cacheKey]) return avCache[cacheKey];
-  const key = getAV();
-  const size = needFull ? 'full' : 'compact';
-  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${encodeURIComponent(symbol)}&outputsize=${size}&apikey=${key}`;
+  
+  const key = getFH();
+  if (!key) throw new Error('NO_KEY');
+
+  const toTs = Math.floor(Date.now() / 1000);
+  let fromTs;
+  
+  if (baseDate) {
+    fromTs = Math.floor(new Date(baseDate).getTime() / 1000) - (7 * 86400); 
+  } else {
+    fromTs = toTs - (365 * 86400);
+  }
+
+  const url = `https://finnhub.io/api/v1/stock/candle?symbol=${encodeURIComponent(symbol)}&resolution=D&from=${fromTs}&to=${toTs}&token=${key}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const data = await res.json();
-  if (data['Error Message']) throw new Error('TICKER');
-  if (data['Note'] || data['Information']) {
-    const msg = data['Note'] || data['Information'] || '';
-    if (msg.includes('premium') || msg.includes('25 requests')) throw new Error('DAILY_LIMIT');
-    throw new Error('RATE_LIMIT');
-  }
-  const ts = data['Time Series (Daily)'];
-  if (!ts) throw new Error('FORMAT');
+  
+  if (data.s === 'no_data') throw new Error('TICKER');
+  if (data.error) throw new Error('RATE_LIMIT');
+
   const result = {};
-  for (const d in ts) result[d] = parseFloat(ts[d]['4. close']);
+  if (data.t && data.c) {
+    for (let i = 0; i < data.t.length; i++) {
+      const d = new Date(data.t[i] * 1000);
+      const dateStr = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+      result[dateStr] = data.c[i];
+    }
+  }
+  
   avCache[cacheKey] = result;
   return result;
 }
@@ -1946,10 +1963,10 @@ async function loadChart(posId) {
 
   document.getElementById('chartMeta').textContent = baseDate ? `${baseDate} 부터 · ${baseLabel}` : '';
 
-  const avKey = getAV();
-  if (!avKey) {
-    showChartMsg('차트를 보려면 Alpha Vantage API 키가 필요합니다<br><a id="needAvKey">API 키 설정</a>', 'error');
-    document.getElementById('needAvKey')?.addEventListener('click', () => document.getElementById('apiKeyBtn').click());
+  const fhKey = getFH();
+  if (!fhKey) {
+    showChartMsg('차트를 보려면 Finnhub API 키 설정이 필요합니다<br><a id="needFhKey">API 키 설정</a>', 'error');
+    document.getElementById('needFhKey')?.addEventListener('click', () => document.getElementById('apiKeyBtn').click());
     return;
   }
   if (!baseDate) {
@@ -1960,28 +1977,16 @@ async function loadChart(posId) {
   showChartMsg('데이터 불러오는 중...', 'loading');
 
   try {
-    // 90일 이상 전 매수면 full 모드 (더 많은 데이터), 아니면 compact
-    const daysSinceBase = baseDate ? Math.round((Date.now() - new Date(baseDate).getTime()) / 86400000) : 0;
-    const needFull = daysSinceBase > 90;
-
-    const stockData = await fetchAV(pos.ticker, needFull);
-    // 벤치마크: 캐시 히트가 아닌 경우 분당 한도 방지를 위해 간격 두기
+    const stockData = await fetchPriceData(pos.ticker, baseDate);
+    
     let spyData = null, qqqData = null;
-    try {
-      const spyKey = 'SPY' + (needFull ? '_full' : '_compact');
-      if (!avCache[spyKey]) await new Promise(r => setTimeout(r, 1200));
-      spyData = await fetchAV('SPY', needFull);
-    } catch(e) {}
-    try {
-      const qqqKey = 'QQQ' + (needFull ? '_full' : '_compact');
-      if (!avCache[qqqKey]) await new Promise(r => setTimeout(r, 1200));
-      qqqData = await fetchAV('QQQ', needFull);
-    } catch(e) {}
+    try { spyData = await fetchPriceData('SPY', baseDate); } catch(e) {}
+    try { qqqData = await fetchPriceData('QQQ', baseDate); } catch(e) {}
+    
     drawChart(pos, stockData, spyData, qqqData, baseDate, basePrice, baseLabel);
   } catch (err) {
     let msg = '데이터 조회 실패';
-    if (err.message === 'RATE_LIMIT') msg = 'Alpha Vantage 분당 호출 한도 초과<br>30초 후 다시 클릭해보세요';
-    else if (err.message === 'DAILY_LIMIT') msg = 'Alpha Vantage 일일 호출 한도(25회) 초과<br>내일 다시 시도하거나 유료 플랜을 확인하세요';
+    if (err.message === 'RATE_LIMIT') msg = 'Finnhub 분당 호출 한도(60회) 초과<br>1분 후 다시 시도해보세요';
     else if (err.message === 'TICKER') msg = `"${pos.ticker}" 데이터 없음 · 미국 주식 티커인지 확인`;
     else msg = '오류: ' + err.message;
     showChartMsg(msg, 'error');
